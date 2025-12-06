@@ -1,6 +1,7 @@
+use crate::errors::CloudError;
 use std::process::Command;
 
-pub fn stop_screen(screen_name: String) -> Result<(), String> {
+pub fn stop_screen(screen_name: String) -> Result<(), CloudError> {
     let status = Command::new("screen")
         .arg("-S")
         .arg(screen_name)
@@ -8,12 +9,10 @@ pub fn stop_screen(screen_name: String) -> Result<(), String> {
         .arg("stuff")
         .arg("stop\n")
         .status()
-        .map_err(|e| format!("Error while executing command: {:?}", e))?;
-    match status.success() {
-        true => Ok(()),
-        false => Err(format!(
-            "\'screen\' command failed with code {}",
-            status.code().unwrap_or(-1)
-        )),
+        .map_err(|_| CloudError::ScreenError)?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(CloudError::ScreenError)
     }
 }

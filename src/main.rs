@@ -1,18 +1,18 @@
-mod screen_manager;
 mod errors;
+mod screen_manager;
 
-use std::fs::create_dir_all;
+use crate::errors::CloudError;
 use crate::screen_manager::stop_screen;
 use axum;
 use axum::extract::{Path, State};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use std::fs::create_dir_all;
 use std::sync::Arc;
 use tokio;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, oneshot};
-use crate::errors::CloudError;
 
 #[derive(Serialize, Deserialize, Clone)]
 struct Server {
@@ -53,14 +53,18 @@ impl Default for Daemon {
 #[derive(Clone)]
 struct AppState {
     daemon: Arc<Mutex<Daemon>>,
-    shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>>
+    shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
 
 fn init_cloud() -> Result<(), CloudError> {
     let status = create_dir_all("running/static");
-    if status.is_err() { return Err(CloudError::FileError)};
+    if status.is_err() {
+        return Err(CloudError::FileError);
+    };
     let status = create_dir_all("running/disposable");
-    if status.is_err() { return Err(CloudError::FileError) };
+    if status.is_err() {
+        return Err(CloudError::FileError);
+    };
     Ok(())
 }
 
@@ -71,12 +75,17 @@ async fn main() -> Result<(), CloudError> {
     println!("Initializing cloud...");
     let cloud_status = init_cloud();
     cloud_status.as_ref().expect("Shutting down: ");
-    if cloud_status.is_err() { return Err(CloudError::FatalError)};
+    if cloud_status.is_err() {
+        return Err(CloudError::FatalError);
+    };
 
     let daemon = Arc::new(Mutex::new(Daemon::default()));
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-    let app_state = AppState {daemon, shutdown: Arc::new(Mutex::new(Some(shutdown_tx)))};
+    let app_state = AppState {
+        daemon,
+        shutdown: Arc::new(Mutex::new(Some(shutdown_tx))),
+    };
 
     let app = Router::new()
         .route("/", get(test_route))
@@ -92,7 +101,9 @@ async fn main() -> Result<(), CloudError> {
         .with_graceful_shutdown(async {
             let _ = shutdown_rx.await;
             println!("Shutting down...");
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
     Ok(())
 }
 
