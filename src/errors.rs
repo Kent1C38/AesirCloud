@@ -3,4 +3,6 @@ pub enum CloudError {
     FileError,
     FatalError,
     ScreenError,
+    DownloadError,
+    UnavailablePort,
 }

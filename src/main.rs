@@ -1,8 +1,9 @@
 mod errors;
 mod screen_manager;
+mod file_downloader;
 
 use crate::errors::CloudError;
-use crate::screen_manager::stop_screen;
+use crate::screen_manager::{stop_screen, JavaVersion};
 use axum;
 use axum::extract::{Path, State};
 use axum::routing::{delete, get, post};
@@ -10,14 +11,44 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use std::fs::create_dir_all;
 use std::sync::Arc;
+use axum::response::IntoResponse;
+use reqwest::StatusCode;
 use tokio;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, oneshot};
 
+#[derive(Deserialize, Serialize, Clone)]
+enum MinecraftVersion {
+    V1_21,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+enum MineacrftLoader {
+    Paper(MinecraftVersion),
+    ThunderStorm(MinecraftVersion),
+}
+impl MineacrftLoader {
+    pub fn download_url(&self) -> &'static str {
+        match self {
+            MineacrftLoader::Paper(MinecraftVersion::V1_21) => "https://fill-data.papermc.io/v1/objects/a61a0585e203688f606ca3a649760b8ba71efca01a4af7687db5e41408ee27aa/paper-1.21.10-117.jar",
+            MineacrftLoader::ThunderStorm(MinecraftVersion::V1_21) => ""
+        }
+    }
+
+    pub fn get_java_version(&self) -> JavaVersion {
+        match self {
+            MineacrftLoader::Paper(MinecraftVersion::V1_21) => JavaVersion::J21,
+            MineacrftLoader::ThunderStorm(MinecraftVersion::V1_21) => JavaVersion::J25
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
-struct Server {
+struct Instance {
     server_id: String,
     server_name: String,
+    loader: MineacrftLoader,
+    folder: String,
     port: u16,
     max_player: u16,
 }
@@ -30,7 +61,7 @@ struct PortAvailability {
 
 #[derive(Serialize, Deserialize, Clone)]
 struct Daemon {
-    server_list: Vec<Server>,
+    server_list: Vec<Instance>,
     port_list: Vec<PortAvailability>,
 }
 
@@ -58,6 +89,14 @@ struct AppState {
 
 fn init_cloud() -> Result<(), CloudError> {
     let status = create_dir_all("running/static");
+    if status.is_err() {
+        return Err(CloudError::FileError);
+    };
+    let status = create_dir_all("templates");
+    if status.is_err() {
+        return Err(CloudError::FileError);
+    };
+    let status = create_dir_all("versions");
     if status.is_err() {
         return Err(CloudError::FileError);
     };
@@ -91,6 +130,7 @@ async fn main() -> Result<(), CloudError> {
         .route("/", get(test_route))
         .route("/stop/{name}", delete(stop_instance))
         .route("/shutdown", post(shutdown))
+        .route("/start", post(start_static_instance))
         .with_state(app_state);
 
     let listener = TcpListener::bind("0.0.0.0:3001").await.unwrap();
@@ -121,8 +161,39 @@ async fn test_route(State(state): State<AppState>) -> Json<Vec<PortAvailability>
 async fn stop_instance(
     State(state): State<AppState>,
     Path(name): Path<String>,
-) -> Json<Vec<Server>> {
+) -> Json<Vec<Instance>> {
     let guard = state.daemon.lock().await;
     stop_screen(name).expect("Error in \'screen\' command !");
     Json(guard.server_list.clone())
+}
+
+async fn start_static_instance(
+    State(state): State<AppState>,
+    Json(request): Json<Instance>
+) -> impl IntoResponse {
+    match do_start_static_instance(state.daemon.clone(), request).await {
+        Ok(_) => (StatusCode::OK, "Instance Started").into_response(),
+        Err(err) => {
+            eprintln!("Error starting instance: {:?}", err);
+            (StatusCode::INTERNAL_SERVER_ERROR, "Error starting instance").into_response()
+        }
+    }
+}
+
+async fn do_start_static_instance(
+    daemon: Arc<Mutex<Daemon>>,
+    request: Instance
+) -> Result<(), CloudError> {
+    let mut daemon_guard = daemon.lock().await;
+
+    if let Some(port) = daemon_guard.port_list.iter_mut().find(|p| p.port == request.port) {
+        if !port.is_available { return Err(CloudError::UnavailablePort) }
+        port.is_available = false;
+    } else {
+        return Err(CloudError::UnavailablePort)
+    }
+    daemon_guard.server_list.push(request.clone());
+    drop(daemon_guard);
+    screen_manager::start_screen(request).await?;
+    Ok(())
 }

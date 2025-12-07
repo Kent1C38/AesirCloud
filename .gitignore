@@ -1,3 +1,7 @@
 /target
 /running
 /.idea
+/templates
+/versions
+.jdk
+
