@@ -1,6 +1,5 @@
 use crate::errors::CloudError;
 
-use reqwest;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use futures_util::StreamExt;

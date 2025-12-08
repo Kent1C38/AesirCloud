@@ -88,23 +88,10 @@ struct AppState {
 }
 
 fn init_cloud() -> Result<(), CloudError> {
-    let status = create_dir_all("running/static");
-    if status.is_err() {
-        return Err(CloudError::FileError);
-    };
-    let status = create_dir_all("templates");
-    if status.is_err() {
-        return Err(CloudError::FileError);
-    };
-    let status = create_dir_all("versions");
-    if status.is_err() {
-        return Err(CloudError::FileError);
-    };
-    let status = create_dir_all("running/disposable");
-    if status.is_err() {
-        return Err(CloudError::FileError);
-    };
-    Ok(())
+    create_dir_all("running/static").map_err(|_| CloudError::FileError)?;
+    create_dir_all("templates").map_err(|_| CloudError::FileError)?;
+    create_dir_all("versions").map_err(|_| CloudError::FileError)?;
+    create_dir_all("running/disposable").map_err(|_| CloudError::FileError)
 }
 
 #[tokio::main]
@@ -119,7 +106,7 @@ async fn main() -> Result<(), CloudError> {
     };
 
     let daemon = Arc::new(Mutex::new(Daemon::default()));
-    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
     let app_state = AppState {
         daemon,
