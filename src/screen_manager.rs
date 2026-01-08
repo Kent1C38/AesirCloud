@@ -1,30 +1,34 @@
-use std::fs::{create_dir_all, File};
-use std::path::Path;
 use crate::errors::CloudError;
-use std::process::Command;
+use crate::file_downloader::download_file;
+use crate::instance;
 use flate2::read::GzDecoder;
+use std::fs::{File, create_dir_all};
+use std::path::Path;
+use std::process::Command;
 use tar::Archive;
 use tokio::fs::remove_file;
-use crate::file_downloader::download_file;
-use crate::Instance;
 
 pub enum JavaVersion {
     J21,
-    J25
+    J25,
 }
 
 impl JavaVersion {
     pub fn download_url(&self) -> &'static str {
         match self {
-            JavaVersion::J21 => "https://download.oracle.com/java/21/latest/jdk-21_linux-x64_bin.tar.gz",
-            JavaVersion::J25 => "https://download.oracle.com/java/25/latest/jdk-25_linux-x64_bin.tar.gz"
+            JavaVersion::J21 => {
+                "https://download.oracle.com/java/21/latest/jdk-21_linux-x64_bin.tar.gz"
+            }
+            JavaVersion::J25 => {
+                "https://download.oracle.com/java/25/latest/jdk-25_linux-x64_bin.tar.gz"
+            }
         }
     }
 
     pub fn folder_name(&self) -> &'static str {
         match self {
             JavaVersion::J21 => "jdk21",
-            JavaVersion::J25 => "jdk25"
+            JavaVersion::J25 => "jdk25",
         }
     }
 
@@ -49,9 +53,13 @@ impl JavaVersion {
 
         let temp_extract = format!("{}/temp_extract", local);
         create_dir_all(&temp_extract).map_err(|_| CloudError::FileError)?;
-        archive.unpack(&temp_extract).map_err(|_| CloudError::FileError)?;
+        archive
+            .unpack(&temp_extract)
+            .map_err(|_| CloudError::FileError)?;
 
-        let mut entries = std::fs::read_dir(&temp_extract).map_err(|_| CloudError::FileError)?.filter_map(Result::ok);
+        let mut entries = std::fs::read_dir(&temp_extract)
+            .map_err(|_| CloudError::FileError)?
+            .filter_map(Result::ok);
         if let Some(first_entry) = entries.next() {
             let extracted_folder = first_entry.path();
             for entry in std::fs::read_dir(&extracted_folder).map_err(|_| CloudError::FileError)? {
@@ -62,7 +70,9 @@ impl JavaVersion {
         }
 
         std::fs::remove_dir_all(&temp_extract).map_err(|_| CloudError::FileError)?;
-        remove_file(&archive_path).await.map_err(|_| CloudError::FileError)?;
+        remove_file(&archive_path)
+            .await
+            .map_err(|_| CloudError::FileError)?;
 
         Ok(())
     }
@@ -88,7 +98,7 @@ pub fn stop_screen(screen_name: String) -> Result<(), CloudError> {
     }
 }
 
-pub async fn start_screen(instance: Instance) -> Result<(), CloudError> {
+pub async fn start_screen(instance: instance::Instance) -> Result<(), CloudError> {
     let java_version = instance.loader.get_java_version();
 
     if !java_version.is_installed() {

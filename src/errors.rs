@@ -5,4 +5,7 @@ pub enum CloudError {
     ScreenError,
     DownloadError,
     UnavailablePort,
+    InstanceAlreadyExists,
+    HTTPError,
+    JSONError,
 }

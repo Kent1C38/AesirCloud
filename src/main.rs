@@ -1,57 +1,28 @@
 mod errors;
-mod screen_manager;
 mod file_downloader;
+mod instance;
+mod minecraft_loader;
+mod minecraft_version;
+mod screen_manager;
 
 use crate::errors::CloudError;
-use crate::screen_manager::{stop_screen, JavaVersion};
+use crate::instance::{Instance, start_instance_status, stop_instance};
 use axum;
-use axum::extract::{Path, State};
+use axum::extract::State;
+use axum::response::IntoResponse;
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs::create_dir_all;
 use std::sync::Arc;
-use axum::response::IntoResponse;
-use reqwest::StatusCode;
 use tokio;
 use tokio::net::TcpListener;
+use tokio::signal;
 use tokio::sync::{Mutex, oneshot};
 
-#[derive(Deserialize, Serialize, Clone)]
-enum MinecraftVersion {
-    V1_21,
-}
-
-#[derive(Deserialize, Serialize, Clone)]
-enum MineacrftLoader {
-    Paper(MinecraftVersion),
-    ThunderStorm(MinecraftVersion),
-}
-impl MineacrftLoader {
-    pub fn download_url(&self) -> &'static str {
-        match self {
-            MineacrftLoader::Paper(MinecraftVersion::V1_21) => "https://fill-data.papermc.io/v1/objects/a61a0585e203688f606ca3a649760b8ba71efca01a4af7687db5e41408ee27aa/paper-1.21.10-117.jar",
-            MineacrftLoader::ThunderStorm(MinecraftVersion::V1_21) => ""
-        }
-    }
-
-    pub fn get_java_version(&self) -> JavaVersion {
-        match self {
-            MineacrftLoader::Paper(MinecraftVersion::V1_21) => JavaVersion::J21,
-            MineacrftLoader::ThunderStorm(MinecraftVersion::V1_21) => JavaVersion::J25
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct Instance {
-    server_id: String,
-    server_name: String,
-    loader: MineacrftLoader,
-    folder: String,
-    port: u16,
-    max_player: u16,
-}
+const PORT_RANGE: std::ops::Range<u16> = 25570..2999;
 
 #[derive(Serialize, Deserialize, Clone)]
 struct PortAvailability {
@@ -59,25 +30,76 @@ struct PortAvailability {
     is_available: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize)]
+struct PersistentState {
+    server_list: Vec<Instance>,
+}
+
 struct Daemon {
     server_list: Vec<Instance>,
-    port_list: Vec<PortAvailability>,
+    used_ports: HashSet<u16>,
 }
 
 impl Default for Daemon {
     fn default() -> Self {
-        let initialized_ports: Vec<PortAvailability> = (25570..25590)
-            .into_iter()
-            .map(|x| PortAvailability {
-                port: x,
-                is_available: true,
-            })
-            .collect();
         Self {
             server_list: Vec::new(),
-            port_list: initialized_ports,
+            used_ports: HashSet::new(),
         }
+    }
+}
+
+impl Daemon {
+    fn from_persistent(state: PersistentState) -> Self {
+        let used_ports = state.server_list.iter().map(|i| i.port).collect();
+        Self {
+            server_list: state.server_list,
+            used_ports,
+        }
+    }
+
+    fn save(&self) -> Result<(), CloudError> {
+        let persistent_instances: Vec<Instance> = self
+            .server_list
+            .iter()
+            .filter(|i| i.is_persistent)
+            .cloned()
+            .collect();
+        let state = PersistentState {
+            server_list: persistent_instances,
+        };
+
+        let json = serde_json::to_string_pretty(&state).map_err(|_| CloudError::JSONError)?;
+        std::fs::write("state.json", json).map_err(|_| CloudError::FileError)?;
+        Ok(())
+    }
+
+    fn load_or_default() -> Self {
+        match std::fs::read_to_string("state.json") {
+            Ok(content) => match serde_json::from_str::<PersistentState>(&content) {
+                Ok(state) => Self::from_persistent(state),
+                Err(_) => Self::default(),
+            },
+            Err(_) => Self::default(),
+        }
+    }
+
+    fn allocate_port(&mut self) -> Option<u16> {
+        for port in PORT_RANGE {
+            if self.used_ports.contains(&port) {
+                continue;
+            }
+
+            if std::net::TcpListener::bind(("0.0.0.0", port)).is_ok() {
+                self.used_ports.insert(port);
+                return Some(port);
+            }
+        }
+        None
+    }
+
+    fn free_port(&mut self, port: u16) {
+        self.used_ports.remove(&port);
     }
 }
 
@@ -105,82 +127,68 @@ async fn main() -> Result<(), CloudError> {
         return Err(CloudError::FatalError);
     };
 
-    let daemon = Arc::new(Mutex::new(Daemon::default()));
+    let daemon = Arc::new(Mutex::new(Daemon::load_or_default()));
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
     let app_state = AppState {
-        daemon,
+        daemon: daemon.clone(),
         shutdown: Arc::new(Mutex::new(Some(shutdown_tx))),
     };
+
+    let daemon_for_sig = daemon.clone();
+    tokio::spawn(async move {
+        signal::ctrl_c().await.expect("ctrl_c failed");
+        println!("SIGINT received");
+        let guard = daemon_for_sig.lock().await;
+        if let Err(_) = guard.save() {
+            eprintln!("Failed to save state !");
+        }
+        println!("State saved !");
+        println!("Goodbye !");
+    });
 
     let app = Router::new()
         .route("/", get(test_route))
         .route("/stop/{name}", delete(stop_instance))
+        .route("/start/{name}", post(start_instance_status))
         .route("/shutdown", post(shutdown))
-        .route("/start", post(start_static_instance))
+        .route("/register", post(instance::create_instance))
+        //.route("/start", post(instance::start_static_instance))
         .with_state(app_state);
 
     let listener = TcpListener::bind("0.0.0.0:3001").await.unwrap();
 
     println!("Done !");
     println!("Listening on port: 3001");
+    let daemon_shutdown = daemon.clone();
     axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            let _ = shutdown_rx.await;
-            println!("Shutting down...");
+        .with_graceful_shutdown({
+            let shutdown_rx = shutdown_rx;
+            async move {
+                shutdown_rx.await.ok();
+
+                println!("HTTP shutdown requested");
+                let guard = daemon_shutdown.lock().await;
+                if let Err(_) = guard.save() {
+                    eprintln!("Failed to save state !");
+                }
+                println!("State saved !");
+                println!("Goodbye !");
+            }
         })
         .await
         .unwrap();
     Ok(())
 }
 
-async fn shutdown(State(state): State<AppState>) {
+async fn shutdown(State(state): State<AppState>) -> impl IntoResponse {
     if let Some(tx) = state.shutdown.lock().await.take() {
         let _ = tx.send(());
     }
+    StatusCode::OK
 }
 
-async fn test_route(State(state): State<AppState>) -> Json<Vec<PortAvailability>> {
+async fn test_route(State(state): State<AppState>) -> Json<Vec<Instance>> {
     let guard = state.daemon.lock().await;
-    Json(guard.port_list.clone())
-}
-
-async fn stop_instance(
-    State(state): State<AppState>,
-    Path(name): Path<String>,
-) -> Json<Vec<Instance>> {
-    let guard = state.daemon.lock().await;
-    stop_screen(name).expect("Error in \'screen\' command !");
     Json(guard.server_list.clone())
-}
-
-async fn start_static_instance(
-    State(state): State<AppState>,
-    Json(request): Json<Instance>
-) -> impl IntoResponse {
-    match do_start_static_instance(state.daemon.clone(), request).await {
-        Ok(_) => (StatusCode::OK, "Instance Started").into_response(),
-        Err(err) => {
-            eprintln!("Error starting instance: {:?}", err);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Error starting instance").into_response()
-        }
-    }
-}
-
-async fn do_start_static_instance(
-    daemon: Arc<Mutex<Daemon>>,
-    request: Instance
-) -> Result<(), CloudError> {
-    let mut daemon_guard = daemon.lock().await;
-
-    if let Some(port) = daemon_guard.port_list.iter_mut().find(|p| p.port == request.port) {
-        if !port.is_available { return Err(CloudError::UnavailablePort) }
-        port.is_available = false;
-    } else {
-        return Err(CloudError::UnavailablePort)
-    }
-    daemon_guard.server_list.push(request.clone());
-    drop(daemon_guard);
-    screen_manager::start_screen(request).await?;
-    Ok(())
 }

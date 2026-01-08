@@ -1,8 +1,8 @@
 use crate::errors::CloudError;
 
+use futures_util::StreamExt;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
-use futures_util::StreamExt;
 
 pub async fn download_file(url: &str, path: &str) -> Result<(), CloudError> {
     let response = reqwest::get(url)
