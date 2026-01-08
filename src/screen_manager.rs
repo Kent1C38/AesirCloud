@@ -105,14 +105,20 @@ pub async fn start_screen(instance: instance::Instance) -> Result<(), CloudError
         java_version.install().await?
     }
 
-    let java_path = format!("{}/bin/java", java_version.local_path());
+    let java_path = format!("../../../{}/bin/java", java_version.local_path());
     let mut cmd = Command::new("screen");
     cmd.arg("-S")
-        .arg(&instance.server_name)
+        .arg(&instance.server_id)
         .arg("-dm")
         .arg(java_path)
         .arg("-jar")
-        .arg(format!("{}/server.jar", instance.folder));
+        .arg(format!("../../../versions/{}/{}-{}.jar", instance.loader.name(), instance.loader.name(), instance.loader.version()))
+        .arg("nogui")
+        .current_dir(format!(
+            "running/{}/{}",
+            if instance.is_persistent {"static"} else {"disposable"},
+            instance.server_id
+        ));
 
     let status = cmd.status().map_err(|_| CloudError::ScreenError)?;
     if status.success() {

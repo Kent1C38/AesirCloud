@@ -6,7 +6,7 @@ mod minecraft_version;
 mod screen_manager;
 
 use crate::errors::CloudError;
-use crate::instance::{Instance, start_instance_status, stop_instance};
+use crate::instance::{Instance, start_instance_status, stop_instance, create_instance};
 use axum;
 use axum::extract::State;
 use axum::response::IntoResponse;
@@ -16,6 +16,7 @@ use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs::create_dir_all;
+use std::process::exit;
 use std::sync::Arc;
 use tokio;
 use tokio::net::TcpListener;
@@ -50,6 +51,11 @@ impl Default for Daemon {
 }
 
 impl Daemon {
+
+    pub fn get_instance(&self, server_id: &str) -> Option<&Instance> {
+        self.server_list.iter().find(|inst| inst.server_id == server_id)
+    }
+
     fn from_persistent(state: PersistentState) -> Self {
         let used_ports = state.server_list.iter().map(|i| i.port).collect();
         Self {
@@ -145,6 +151,7 @@ async fn main() -> Result<(), CloudError> {
         }
         println!("State saved !");
         println!("Goodbye !");
+        exit(0);
     });
 
     let app = Router::new()
@@ -152,8 +159,7 @@ async fn main() -> Result<(), CloudError> {
         .route("/stop/{name}", delete(stop_instance))
         .route("/start/{name}", post(start_instance_status))
         .route("/shutdown", post(shutdown))
-        .route("/register", post(instance::create_instance))
-        //.route("/start", post(instance::start_static_instance))
+        .route("/register", post(create_instance))
         .with_state(app_state);
 
     let listener = TcpListener::bind("0.0.0.0:3001").await.unwrap();

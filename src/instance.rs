@@ -1,6 +1,7 @@
+use std::fs;
 use crate::errors::CloudError;
 use crate::minecraft_loader::MinecraftLoader;
-use crate::screen_manager::stop_screen;
+use crate::screen_manager::{start_screen, stop_screen};
 use crate::{AppState, Daemon};
 use axum::Json;
 use axum::extract::{Path, State};
@@ -49,6 +50,17 @@ async fn register_instance(
         return Err(CloudError::InstanceAlreadyExists);
     }
 
+    let dir_path = format!(
+        "running/{}/{}",
+        if instance.is_persistent {"static"} else {"disposable"},
+        instance.server_id
+    );
+
+    if let Err(e) = fs::create_dir_all(&dir_path) {
+        eprintln!("Failed to create directory {}: {}", dir_path, e);
+        return Err(CloudError::FileError);
+    }
+
     guard.server_list.push(instance);
     Ok(())
 }
@@ -57,11 +69,37 @@ pub async fn start_instance_status(
     State(state): State<AppState>,
     Path(server_id): Path<String>,
 ) -> impl IntoResponse {
+    let instance_opt = {
+        let guard = state.daemon.lock().await;
+        guard.get_instance(&server_id).cloned()
+    };
 
+    if let Some(instance) = instance_opt {
+        start_instance(instance).await.into_response()
+    } else {
+        (StatusCode::NOT_FOUND, "Could not find this instance !").into_response()
+    }
 }
 
-async fn start_instance(daemon: Arc<Mutex<Daemon>>) -> Result<(), CloudError> {
-    let mut guard = daemon.lock().await;
+async fn start_instance(instance: Instance) -> (StatusCode, String) {
+
+    let loader = &instance.loader;
+
+    if !loader.is_installed() {
+        if let Err(_) = loader.install().await {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Error while retrieving the minecraft loader !".to_string()
+            );
+        }
+        println!("Downloaded new minecraft loader");
+    }
+
+    if let Err(_) = start_screen(instance).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Error while starting screen".to_string())
+    }
+
+    (StatusCode::OK, "Server started".to_string())
 }
 
 // pub async fn start_static_instance(

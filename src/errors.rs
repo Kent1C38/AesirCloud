@@ -8,4 +8,5 @@ pub enum CloudError {
     InstanceAlreadyExists,
     HTTPError,
     JSONError,
+    NoStableBuild,
 }
