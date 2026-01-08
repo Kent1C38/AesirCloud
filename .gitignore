@@ -1,7 +1,8 @@
 /target
-/running
+/tests/running
 /.idea
-/templates
-/versions
-.jdk
+/tests/templates
+/tests/versions
+/tests
+tests/.jdk
 

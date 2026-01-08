@@ -1,12 +1,13 @@
 mod errors;
 mod file_downloader;
+mod heartbeat;
 mod instance;
 mod minecraft_loader;
 mod minecraft_version;
 mod screen_manager;
 
 use crate::errors::CloudError;
-use crate::instance::{Instance, start_instance_status, stop_instance, create_instance};
+use crate::instance::{Instance, create_instance, start_instance_status, stop_instance};
 use axum;
 use axum::extract::State;
 use axum::response::IntoResponse;
@@ -15,13 +16,15 @@ use axum::{Json, Router};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::fs::create_dir_all;
+use std::fs::{create_dir_all, write};
 use std::process::exit;
 use std::sync::Arc;
+use futures_util::FutureExt;
 use tokio;
 use tokio::net::TcpListener;
 use tokio::signal;
 use tokio::sync::{Mutex, oneshot};
+use crate::heartbeat::heartbeat_handler;
 
 const PORT_RANGE: std::ops::Range<u16> = 25570..2999;
 
@@ -37,7 +40,7 @@ struct PersistentState {
 }
 
 struct Daemon {
-    server_list: Vec<Instance>,
+    server_list: Vec<Arc<Mutex<Instance>>>,
     used_ports: HashSet<u16>,
 }
 
@@ -51,32 +54,53 @@ impl Default for Daemon {
 }
 
 impl Daemon {
-
-    pub fn get_instance(&self, server_id: &str) -> Option<&Instance> {
-        self.server_list.iter().find(|inst| inst.server_id == server_id)
+    pub async fn get_instance(&self, server_id: &str) -> Option<Arc<Mutex<Instance>>> {
+        for inst in &self.server_list {
+            let guard = inst.lock().await;
+            if guard.server_id == server_id {
+                return Some(inst.clone())
+            }
+        }
+        None
     }
 
     fn from_persistent(state: PersistentState) -> Self {
-        let used_ports = state.server_list.iter().map(|i| i.port).collect();
+        let server_list = state
+            .server_list
+            .into_iter()
+            .map(|inst| Arc::new(Mutex::new(inst)))
+            .collect::<Vec<_>>();
+
+        let used_ports = server_list
+            .iter()
+            .map(|inst| {
+                let inst = futures::executor::block_on(inst.lock());
+                inst.port
+            })
+            .collect::<HashSet<_>>();
+
         Self {
-            server_list: state.server_list,
+            server_list,
             used_ports,
         }
     }
 
-    fn save(&self) -> Result<(), CloudError> {
-        let persistent_instances: Vec<Instance> = self
-            .server_list
-            .iter()
-            .filter(|i| i.is_persistent)
-            .cloned()
-            .collect();
+    async fn save(&self) -> Result<(), CloudError> {
+        let mut persistent_instances = Vec::new();
+        for inst in &self.server_list {
+            let guard = inst.lock().await;
+            if guard.is_persistent {
+                persistent_instances.push(guard.clone());
+            }
+        }
+
         let state = PersistentState {
-            server_list: persistent_instances,
+            server_list: persistent_instances
         };
 
-        let json = serde_json::to_string_pretty(&state).map_err(|_| CloudError::JSONError)?;
-        std::fs::write("state.json", json).map_err(|_| CloudError::FileError)?;
+        let json = serde_json::to_string_pretty(&state)
+            .map_err(|_| CloudError::JSONError)?;
+        write("state.json", json).map_err(|_| CloudError::FileError)?;
         Ok(())
     }
 
@@ -146,7 +170,7 @@ async fn main() -> Result<(), CloudError> {
         signal::ctrl_c().await.expect("ctrl_c failed");
         println!("SIGINT received");
         let guard = daemon_for_sig.lock().await;
-        if let Err(_) = guard.save() {
+        if let Err(_) = guard.save().await {
             eprintln!("Failed to save state !");
         }
         println!("State saved !");
@@ -160,6 +184,7 @@ async fn main() -> Result<(), CloudError> {
         .route("/start/{name}", post(start_instance_status))
         .route("/shutdown", post(shutdown))
         .route("/register", post(create_instance))
+        .route("/heartbeat/{name}", post(heartbeat_handler))
         .with_state(app_state);
 
     let listener = TcpListener::bind("0.0.0.0:3001").await.unwrap();
@@ -175,7 +200,7 @@ async fn main() -> Result<(), CloudError> {
 
                 println!("HTTP shutdown requested");
                 let guard = daemon_shutdown.lock().await;
-                if let Err(_) = guard.save() {
+                if let Err(_) = guard.save().await {
                     eprintln!("Failed to save state !");
                 }
                 println!("State saved !");
@@ -196,5 +221,10 @@ async fn shutdown(State(state): State<AppState>) -> impl IntoResponse {
 
 async fn test_route(State(state): State<AppState>) -> Json<Vec<Instance>> {
     let guard = state.daemon.lock().await;
-    Json(guard.server_list.clone())
+    let mut instances = Vec::new();
+    for inst in &guard.server_list {
+        let inst_guard = inst.lock().await;
+        instances.push(inst_guard.clone())
+    }
+    Json(instances)
 }

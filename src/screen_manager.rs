@@ -112,11 +112,20 @@ pub async fn start_screen(instance: instance::Instance) -> Result<(), CloudError
         .arg("-dm")
         .arg(java_path)
         .arg("-jar")
-        .arg(format!("../../../versions/{}/{}-{}.jar", instance.loader.name(), instance.loader.name(), instance.loader.version()))
+        .arg(format!(
+            "../../../versions/{}/{}-{}.jar",
+            instance.loader.name(),
+            instance.loader.name(),
+            instance.loader.version()
+        ))
         .arg("nogui")
         .current_dir(format!(
             "running/{}/{}",
-            if instance.is_persistent {"static"} else {"disposable"},
+            if instance.is_persistent {
+                "static"
+            } else {
+                "disposable"
+            },
             instance.server_id
         ));
 

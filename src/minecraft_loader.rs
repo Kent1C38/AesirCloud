@@ -1,11 +1,10 @@
-use std::fs::create_dir_all;
-use std::path::Path;
 use crate::errors::CloudError;
+use crate::file_downloader::download_file;
 use crate::minecraft_version::MinecraftVersion;
 use crate::screen_manager::JavaVersion;
 use serde::{Deserialize, Serialize};
-use crate::file_downloader::download_file;
-
+use std::fs::create_dir_all;
+use std::path::Path;
 
 #[derive(Deserialize)]
 struct DownloadInfo {
@@ -26,14 +25,13 @@ pub enum MinecraftLoader {
 }
 
 impl MinecraftLoader {
-    
     pub fn name(&self) -> &'static str {
-        match self { 
+        match self {
             MinecraftLoader::Paper(_) => "paper",
-            MinecraftLoader::ThunderStorm(_) => "thunderstorm"
+            MinecraftLoader::ThunderStorm(_) => "thunderstorm",
         }
     }
-    
+
     pub fn version(&self) -> &'static str {
         match self {
             MinecraftLoader::Paper(ver) => ver.get(),
@@ -42,7 +40,10 @@ impl MinecraftLoader {
     }
     pub async fn latest_build_url(&self) -> Result<String, CloudError> {
         let version = self.version();
-        let url = format!("https://fill.papermc.io/v3/projects/paper/versions/{}/builds", version);
+        let url = format!(
+            "https://fill.papermc.io/v3/projects/paper/versions/{}/builds",
+            version
+        );
 
         let builds: Vec<Build> = reqwest::Client::new()
             .get(&url)
@@ -63,7 +64,7 @@ impl MinecraftLoader {
                     return Ok(info.url.clone());
                 }
             }
-        };
+        }
 
         Err(CloudError::NoStableBuild)
     }
