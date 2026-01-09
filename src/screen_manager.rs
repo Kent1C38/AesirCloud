@@ -1,6 +1,5 @@
 use crate::errors::CloudError;
 use crate::file_downloader::download_file;
-use crate::instance;
 use flate2::read::GzDecoder;
 use std::fs::{File, create_dir_all};
 use std::path::Path;
@@ -10,6 +9,7 @@ use tar::Archive;
 use tokio::fs::remove_file;
 use tokio::sync::Mutex;
 use crate::instance::Instance;
+use crate::loader::build_loader;
 
 pub enum JavaVersion {
     J21,
@@ -103,8 +103,9 @@ pub async fn stop_screen(inst_arc: Arc<Mutex<Instance>>) -> Result<(), CloudErro
     }
 }
 
-pub async fn start_screen(instance: instance::Instance) -> Result<(), CloudError> {
-    let java_version = instance.loader.get_java_version();
+pub async fn start_screen(instance: Instance) -> Result<(), CloudError> {
+    let loader = build_loader(&instance.loader);
+    let java_version = loader.java_version();
 
     if !java_version.is_installed() {
         java_version.install().await?
@@ -119,9 +120,9 @@ pub async fn start_screen(instance: instance::Instance) -> Result<(), CloudError
         .arg("-jar")
         .arg(format!(
             "../../../versions/{}/{}-{}.jar",
-            instance.loader.name(),
-            instance.loader.name(),
-            instance.loader.version()
+            loader.name(),
+            loader.name(),
+            loader.version().get()
         ))
         .arg("nogui")
         .current_dir(format!(

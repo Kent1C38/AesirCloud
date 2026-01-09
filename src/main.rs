@@ -2,9 +2,9 @@ mod errors;
 mod file_downloader;
 mod heartbeat;
 mod instance;
-mod minecraft_loader;
 mod minecraft_version;
 mod screen_manager;
+mod loader;
 
 use crate::errors::CloudError;
 use crate::instance::{Instance, create_instance, start_instance_status, stop_instance};
@@ -19,7 +19,6 @@ use std::collections::HashSet;
 use std::fs::{create_dir_all, write};
 use std::process::exit;
 use std::sync::Arc;
-use futures_util::FutureExt;
 use tokio;
 use tokio::net::TcpListener;
 use tokio::signal;

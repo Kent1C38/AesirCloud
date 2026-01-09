@@ -1,5 +1,4 @@
 use crate::errors::CloudError;
-use crate::minecraft_loader::MinecraftLoader;
 use crate::screen_manager::{start_screen, stop_screen};
 use crate::{AppState, Daemon};
 use axum::Json;
@@ -10,13 +9,15 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use crate::loader::build_loader;
+use crate::loader::config::LoaderConfig;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Instance {
     pub server_id: String,
     pub server_name: String,
     pub is_persistent: bool,
-    pub loader: MinecraftLoader,
+    pub loader: LoaderConfig,
     pub port: u16,
     pub max_player: u16,
     pub started: bool,
@@ -88,7 +89,7 @@ pub async fn start_instance_status(
 
 async fn start_instance(inst_arc: Arc<Mutex<Instance>>) -> (StatusCode, String) {
     let mut instance = inst_arc.lock().await;
-    let loader = &instance.loader;
+    let loader = build_loader(&instance.loader);
 
     if !loader.is_installed() {
         if let Err(_) = loader.install().await {
