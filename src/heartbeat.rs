@@ -28,7 +28,7 @@ pub async fn heartbeat_handler(
 	let (should_start_heartbeat, should_accept_beat) = {
 		let instance = instance_arc.lock().await;
 		(
-			!instance.heartbeat_started,
+			!instance.heartbeat_started && instance.started,
 			instance.started,
 		)
 	};
@@ -49,10 +49,10 @@ pub async fn heartbeat_handler(
 		return (StatusCode::OK, "Beat").into_response();
 	}
 
-	if let Err(_) = stop_screen(name) {
+	if let Err(_) = stop_screen(instance_arc).await {
 		(
 			StatusCode::INTERNAL_SERVER_ERROR,
-			"Could not stop specified screen !",
+			"Could not stop this instance, are you sure it was up ?",
 		).into_response()
 	} else {
 		(StatusCode::CONFLICT, "Should be off, shutting down").into_response()
@@ -89,12 +89,11 @@ pub async fn start_heartbeat_check(instance: Arc<Mutex<Instance>>, daemon: Arc<M
 				println!("Server {} seems down, unregistering...", server_id);
 				let guard = daemon.lock().await;
 				if let Some(inst_arc) = guard.get_instance(&server_id).await {
-					if let Err(_) = stop_screen(server_id.clone()) {
+					if let Err(_) = stop_screen(inst_arc.clone()).await {
 						eprintln!("Error stopping server {}", server_id)
 					}
 					let mut inst_guard = inst_arc.lock().await;
-					inst_guard.started = false;
-					inst_guard.heartbeat_started = false;
+					inst_guard.started = false
 				}
 				break
 			}

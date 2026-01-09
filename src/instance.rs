@@ -80,14 +80,14 @@ pub async fn start_instance_status(
     };
 
     if let Some(instance_arc) = instance_opt {
-        let instance = instance_arc.lock().await.clone();
-        start_instance(instance).await.into_response()
+        start_instance(instance_arc).await.into_response()
     } else {
-        (StatusCode::NOT_FOUND, "Could not find this instance !").into_response()
+        (StatusCode::NOT_FOUND, "Could not find this instance").into_response()
     }
 }
 
-async fn start_instance(instance: Instance) -> (StatusCode, String) {
+async fn start_instance(inst_arc: Arc<Mutex<Instance>>) -> (StatusCode, String) {
+    let mut instance = inst_arc.lock().await;
     let loader = &instance.loader;
 
     if !loader.is_installed() {
@@ -100,22 +100,32 @@ async fn start_instance(instance: Instance) -> (StatusCode, String) {
         println!("Downloaded new minecraft loader");
     }
 
-    if let Err(_) = start_screen(instance).await {
+    if let Err(_) = start_screen(instance.clone()).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             "Error while starting screen".to_string(),
         );
     }
-
+    instance.started = true;
     (StatusCode::OK, "Server started".to_string())
 }
 
 pub async fn stop_instance(
-    Path(name): Path<String>,
+    State(state): State<AppState>,
+    Path(server_id): Path<String>,
 ) -> impl IntoResponse {
-    if let Err(_) = stop_screen(name) {
-        (StatusCode::INTERNAL_SERVER_ERROR, "Error in 'screen' command !").into_response()
+    let instance_opt = {
+        let guard = state.daemon.lock().await;
+        guard.get_instance(&server_id).await.clone()
+    };
+
+    if let Some(inst_arc) = instance_opt {
+        if let Err(_) = stop_screen(inst_arc).await {
+            (StatusCode::INTERNAL_SERVER_ERROR, "Error in 'screen' command !").into_response()
+        } else {
+            (StatusCode::OK, "Successfully stopped screen").into_response()
+        }
     } else {
-        (StatusCode::OK, "Successfully stopped screen").into_response()
+        (StatusCode::NOT_FOUND, "Could not find this instance").into_response()
     }
 }

@@ -5,8 +5,11 @@ use flate2::read::GzDecoder;
 use std::fs::{File, create_dir_all};
 use std::path::Path;
 use std::process::Command;
+use std::sync::Arc;
 use tar::Archive;
 use tokio::fs::remove_file;
+use tokio::sync::Mutex;
+use crate::instance::Instance;
 
 pub enum JavaVersion {
     J21,
@@ -82,16 +85,18 @@ impl JavaVersion {
     }
 }
 
-pub fn stop_screen(screen_name: String) -> Result<(), CloudError> {
+pub async fn stop_screen(inst_arc: Arc<Mutex<Instance>>) -> Result<(), CloudError> {
+    let mut instance = inst_arc.lock().await;
     let status = Command::new("screen")
         .arg("-S")
-        .arg(screen_name)
+        .arg(instance.server_id.clone())
         .arg("-X")
         .arg("stuff")
         .arg("stop\n")
         .status()
         .map_err(|_| CloudError::ScreenError)?;
     if status.success() {
+        instance.heartbeat_started = false;
         Ok(())
     } else {
         Err(CloudError::ScreenError)
