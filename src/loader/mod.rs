@@ -35,6 +35,7 @@ pub trait LoaderBackend: Send + Sync {
 
 		Ok(())
 	}
+
 	fn is_installed(&self) -> bool {
 		let exec = format!("versions/{}/{}-{}.jar", self.name(), self.name(), self.version().get());
 		Path::new(&exec).exists()

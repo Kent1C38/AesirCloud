@@ -7,6 +7,8 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::fs::File;
+use std::io::Write;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use crate::loader::build_loader;
@@ -66,6 +68,18 @@ async fn register_instance(
         eprintln!("Failed to create directory {}: {}", dir_path, e);
         return Err(CloudError::FileError);
     }
+
+    let eula_path = format!("{}/{}", dir_path, "eula.txt");
+    let mut eula = File::create(eula_path).map_err(|_| CloudError::FileError)?;
+    eula.write("eula=true".as_bytes()).map_err(|_| CloudError::FileError)?;
+
+    let config_path = format!("{}/{}", dir_path, "aesir.config");
+    let mut config = File::create(config_path).map_err(|_| CloudError::FileError)?;
+    config.write(format!("server_id={}", instance.server_id).as_bytes()).map_err(|_| CloudError::FileError)?;
+
+    let properties_path = format!("{}/{}", dir_path, "server.properties");
+    let mut properties = File::create(properties_path).map_err(|_| CloudError::FileError)?;
+    properties.write(format!("max-players={}\nserver-port={}", instance.max_player, instance.port).as_bytes()).map_err(|_| CloudError::FileError)?;
 
     guard.server_list.push(Arc::new(Mutex::new(instance)));
     Ok(())
